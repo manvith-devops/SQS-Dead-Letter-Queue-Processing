@@ -1,80 +1,227 @@
-
+````md
 # SQS Dead Letter Queue Processing
 
-This CDK project implements robust message processing with retry and Dead Letter Queue (DLQ)
-handling using AWS SQS, Lambda, SNS, and CloudWatch.
+A serverless AWS messaging system built using Amazon SQS, AWS Lambda, SNS, and CloudWatch to demonstrate retry mechanisms, Dead Letter Queue (DLQ) handling, failure monitoring, and automated replay workflows.
 
-## Architecture
+---
 
-| Resource | Name | Details |
-|---|---|---|
-| Standard queue | `main-queue` | Visibility timeout 30 s, redrive after 3 failures |
-| Standard DLQ | `failed-messages` | 14-day retention |
-| FIFO queue | `main-queue-fifo.fifo` | Content-based deduplication enabled |
-| FIFO DLQ | `failed-messages-fifo.fifo` | 14-day retention |
-| Consumer Lambda | `ConsumerLambda` | Processes messages, simulates 20 % failure, partial-batch response |
-| DLQ Monitor Lambda | `DLQMonitorLambda` | Analyzes failure patterns, sends SNS alert |
-| Replay Lambda | `ReplayLambda` | Drains entire DLQ back into the main queue |
-| SNS Topic | `DLQAlertTopic` | Receives DLQ failure notifications |
+## Overview
 
-## How It Works
+This project simulates real-world asynchronous message processing where failed messages are isolated into Dead Letter Queues after exceeding retry limits.
 
-1. **Consumer** receives batches of up to 10 messages from `main-queue`.  
-   Each message is processed individually — 20 % are intentionally failed.  
-   Only failed message IDs are returned (`batchItemFailures`), so successful ones are **not** retried.
+The implementation includes:
+- Standard and FIFO SQS queues
+- Lambda-based consumers
+- DLQ monitoring
+- SNS notifications
+- Replay functionality for failed events
+- Infrastructure deployment using AWS CDK
 
-2. After a message fails **3 times** SQS automatically moves it to `failed-messages` (DLQ).
+---
 
-3. **DLQ Monitor** is triggered when new messages appear in `failed-messages`.  
-   It logs each failure, counts retry-exhaustion vs partial-failure patterns, then publishes an SNS alert.
+## Components
 
-4. **Replay Lambda** can be invoked manually to drain the entire DLQ back into `main-queue` for reprocessing.
+| Component | Purpose |
+|---|---|
+| `main-queue` | Main queue for standard message processing |
+| `failed-messages` | Dead Letter Queue for failed standard messages |
+| `main-queue-fifo.fifo` | FIFO queue with ordered processing |
+| `failed-messages-fifo.fifo` | DLQ for FIFO queue failures |
+| `ConsumerLambda` | Handles message processing from SQS |
+| `DLQMonitorLambda` | Tracks and analyzes failed messages |
+| `ReplayLambda` | Replays DLQ messages back into the queue |
+| `DLQAlertTopic` | SNS topic for operational alerts |
 
-## Deployment
+---
+
+## Processing Flow
+
+### Message Consumption
+
+The consumer Lambda polls messages from SQS in batches.
+
+Key behaviors:
+- Batch size up to 10 messages
+- Independent processing per record
+- Simulated processing failures
+- Partial batch failure response enabled
+
+Only failed messages are retried while successful records are acknowledged immediately.
+
+---
+
+### Retry Logic
+
+If processing fails repeatedly, Amazon SQS automatically moves the message into the configured Dead Letter Queue after 3 failed attempts.
+
+```text
+Producer → Main Queue → Consumer Lambda → DLQ
+````
+
+This protects the system from repeatedly processing invalid or poison messages.
+
+---
+
+### DLQ Monitoring
+
+The DLQ monitor Lambda is triggered whenever new records arrive in the Dead Letter Queue.
+
+Responsibilities:
+
+* Inspect failed messages
+* Log failure metadata
+* Detect recurring issues
+* Publish SNS alerts
+
+---
+
+### Replay Workflow
+
+The replay Lambda supports operational recovery by moving failed messages from the DLQ back into the primary queue.
+
+Replay sequence:
+
+```text
+Dead Letter Queue → Replay Lambda → Main Queue
+```
+
+This allows failed workloads to be reprocessed without manual intervention.
+
+---
+
+## Deployment Steps
+
+Install required dependencies:
 
 ```bash
 pip install -r requirements.txt
-cdk synth      # validate the template
-cdk deploy     # deploy to AWS
 ```
 
-> If you hit the IAM-role quota (1 000 roles per account) you will need to delete unused roles
-> or request a quota increase before deploying.
+Generate the CloudFormation template:
 
-## Sending Test Messages
+```bash
+cdk synth
+```
 
-`send_messages.py` resolves queue URLs automatically from your AWS configuration — no manual edits needed.
+Deploy infrastructure to AWS:
+
+```bash
+cdk deploy
+```
+
+---
+
+## Testing the System
+
+Run the message publisher script:
 
 ```bash
 python send_messages.py
 ```
 
-This sends 100 messages to `main-queue` and 100 to `main-queue-fifo.fifo`.
+The script automatically:
 
-## Monitoring
+* Resolves queue URLs
+* Sends messages to standard queues
+* Sends messages to FIFO queues
 
-- **CloudWatch Logs**: each Lambda writes to its own log group (`/aws/lambda/<function-name>`, 1-week retention).
-- **SNS Alerts**: subscribe an email address to the `DLQAlertTopic` to receive DLQ failure notifications.
+---
 
-## Replaying DLQ Messages
+## Monitoring & Logging
 
-Invoke the Replay Lambda from the AWS Console or CLI:
+### CloudWatch Logs
+
+Each Lambda writes logs to CloudWatch for:
+
+* Processing activity
+* Failure tracking
+* Replay operations
+* DLQ analysis
+
+---
+
+### SNS Notifications
+
+SNS alerts are triggered when failed messages are detected inside the Dead Letter Queue.
+
+You can subscribe using email:
+
+```bash
+aws sns subscribe \
+  --topic-arn <TOPIC_ARN> \
+  --protocol email \
+  --notification-endpoint you@example.com
+```
+
+---
+
+## Replay Failed Messages
+
+Invoke the replay function manually:
 
 ```bash
 aws lambda invoke \
-  --function-name <ReplayLambdaName from CDK outputs> \
+  --function-name <ReplayLambdaName> \
   --payload '{}' \
   response.json
+```
+
+Check replay results:
+
+```bash
 cat response.json
 ```
 
-The Lambda pages through the entire DLQ (10 messages at a time), re-sends each to `main-queue`,
-and deletes it from the DLQ.
+---
 
-## Success Criteria
+## Features
 
-- [x] Failed messages move to DLQ after 3 attempts
-- [x] DLQ Monitor Lambda triggers on new DLQ messages and sends SNS alert
-- [x] Replay Lambda drains DLQ back to main queue
-- [x] Partial-batch response ensures successfully-processed messages are never retried
-- [x] FIFO queue version with content-based deduplication
+* SQS retry handling
+* DLQ integration
+* Partial batch response processing
+* FIFO queue implementation
+* Content-based deduplication
+* SNS alert notifications
+* DLQ replay automation
+* CloudWatch monitoring
+* Infrastructure as Code with AWS CDK
+
+---
+
+## Technologies Used
+
+* AWS Lambda
+* Amazon SQS
+* Amazon SNS
+* Amazon CloudWatch
+* AWS CDK
+* Python
+* IAM
+
+---
+
+## Future Enhancements
+
+Potential improvements:
+
+* CloudWatch dashboards
+* AWS X-Ray tracing
+* CI/CD integration using GitHub Actions
+* Structured JSON logging
+* Automated replay scheduling
+* Metrics-based scaling
+* Terraform implementation
+
+---
+
+## Validation Checklist
+
+* [x] Messages retry automatically on failure
+* [x] Failed messages move to DLQ after retry exhaustion
+* [x] DLQ monitoring triggers successfully
+* [x] SNS alerts are published
+* [x] Replay Lambda restores failed messages
+* [x] FIFO queue processing works correctly
+
+```
+```
