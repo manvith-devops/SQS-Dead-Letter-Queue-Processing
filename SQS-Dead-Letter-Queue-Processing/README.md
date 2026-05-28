@@ -1,4 +1,4 @@
-````md
+
 # SQS Dead Letter Queue Processing
 
 A serverless AWS messaging system built using Amazon SQS, AWS Lambda, SNS, and CloudWatch to demonstrate retry mechanisms, Dead Letter Queue (DLQ) handling, failure monitoring, and automated replay workflows.
